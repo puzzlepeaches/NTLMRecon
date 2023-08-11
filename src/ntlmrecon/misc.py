@@ -2,7 +2,9 @@ from termcolor import colored
 
 
 def print_banner():
-    print(colored("""
+    print(
+        colored(
+            """
          _   _ _____ _     ___  _________                     
         | \ | |_   _| |    |  \/  || ___ \                    
         |  \| | | | | |    | .  . || |_/ /___  ___ ___  _ __  
@@ -10,11 +12,22 @@ def print_banner():
         | |\  | | | | |____| |  | || |\ \  __/ (_| (_) | | | |
         \_| \_/ \_/ \_____/\_|  |_/\_| \_\___|\___\___/|_| |_| - @pwnfoo
 
-             """ + colored("""v.0.4 beta - Y'all still exposing NTLM endpoints?
-""", 'green') + colored("""
+             """
+            + colored(
+                """v.0.4 beta - Y'all still exposing NTLM endpoints?
+""",
+                "green",
+            )
+            + colored(
+                """
  Bug Reports, Feature Requests : https://git.io/JIR5z
 
-""", "cyan"), 'red'))
+""",
+                "cyan",
+            ),
+            "red",
+        )
+    )
 
 
 INTERNAL_WORDLIST = [

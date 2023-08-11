@@ -22,12 +22,13 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Decoder taken from https://gist.github.com/aseering/829a2270b72345a1dc42, Python3 ported and modified
 VALID_CHRS = set(string.ascii_letters + string.digits + string.punctuation)
 
-FOUND_DOMAINS = ['google.com']
+FOUND_DOMAINS = ["google.com"]
 
 FAIL_DOMAINS = []
 
+
 def clean_str(st):
-    return ''.join((s if s in VALID_CHRS else '?') for s in st)
+    return "".join((s if s in VALID_CHRS else "?") for s in st)
 
 
 class StrStruct(object):
@@ -36,20 +37,23 @@ class StrStruct(object):
         self.length = length
         self.alloc = alloc
         self.offset = offset
-        self.raw = raw[offset:offset + length]
+        self.raw = raw[offset : offset + length]
         self.utf16 = False
 
-        if len(self.raw) >= 2 and self.raw[1] == '\0':
-            self.string = self.raw.decode('utf-16')
+        if len(self.raw) >= 2 and self.raw[1] == "\0":
+            self.string = self.raw.decode("utf-16")
             self.utf16 = True
         else:
             self.string = self.raw
 
     def __str__(self):
-        st = "%s'%s' [%s] (%db @%d)" % ('u' if self.utf16 else '',
-                                        clean_str(self.string),
-                                        self.raw,
-                                        self.length, self.offset)
+        st = "%s'%s' [%s] (%db @%d)" % (
+            "u" if self.utf16 else "",
+            clean_str(self.string),
+            self.raw,
+            self.length,
+            self.offset,
+        )
         if self.alloc != self.length:
             st += " alloc: %d" % self.alloc
         return st
@@ -85,7 +89,7 @@ def decode_ntlm_str(st_raw):
 
 
 def opt_str_struct(name, st, offset):
-    nxt = st[offset:offset + 8]
+    nxt = st[offset : offset + 8]
     if len(nxt) == 8:
         hdr_tup = struct.unpack("<hhi", nxt)
         print("%s: %s" % (name, StrStruct(hdr_tup, st)))
@@ -102,12 +106,14 @@ def get_server_details(st):
         pos = 0
         parsed_data = dict()
         while pos + 4 < len(raw):
-            rec_hdr = struct.unpack("<hh", raw[pos: pos + 4])
+            rec_hdr = struct.unpack("<hh", raw[pos : pos + 4])
             rec_type_id = rec_hdr[0]
             rec_type = target_field_types[rec_type_id]
             rec_sz = rec_hdr[1]
-            subst = raw[pos + 4: pos + 4 + rec_sz]
-            parsed_data[rec_type] = subst.decode('utf-8', errors="ignore").replace("\x00", '')
+            subst = raw[pos + 4 : pos + 4 + rec_sz]
+            parsed_data[rec_type] = subst.decode("utf-8", errors="ignore").replace(
+                "\x00", ""
+            )
             pos += 4 + rec_sz
 
         return parsed_data
@@ -126,7 +132,9 @@ def random_user_agent():
     return choice(user_agents)
 
 
-def requests_retry_session(retries=3, backoff_factor=0.3, status_forcelist=(500, 502, 504), session=None):
+def requests_retry_session(
+    retries=3, backoff_factor=0.3, status_forcelist=(500, 502, 504), session=None
+):
     session = session or requests.Session()
     retry = Retry(
         total=retries,
@@ -136,8 +144,8 @@ def requests_retry_session(retries=3, backoff_factor=0.3, status_forcelist=(500,
         status_forcelist=status_forcelist,
     )
     adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
     return session
 
 
@@ -158,10 +166,12 @@ def url_is_reachable(url):
         return False
     else:
         return url
+
+
 # Verifies if the endpoint has authentication enabled and looks for NTLM specifically
 
 
-def detect_ntlm_auth(url):
+def detect_ntlm_auth(url, silent, random_user_agent):
     global FAIL_DOMAINS
 
     if not is_valid_url(url):
@@ -171,7 +181,11 @@ def detect_ntlm_auth(url):
             if urlparse(url).netloc in FAIL_DOMAINS:
                 return False
             else:
-                response = requests.head(url, verify=False, timeout=3)
+                if random_user_agent:
+                    headers = {"User-Agent": random_user_agent()}
+                else:
+                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"}
+                response = requests.head(url, verify=False, timeout=3, headers=headers)
         except (OSError, ConnectionError) as e:
             if urlparse(url).netloc not in FAIL_DOMAINS:
                 FAIL_DOMAINS.append(urlparse(url).netloc)
@@ -179,61 +193,86 @@ def detect_ntlm_auth(url):
             return False
 
         except Exception as e:
-            print('[!] Error processing {} - '.format(url), e.__class__.__name__)
+            print("[!] Error processing {} - ".format(url), e.__class__.__name__)
             return False
 
         else:
             if response.status_code == 401:
                 response_headers = dict(response.headers)
-                if 'WWW-Authenticate' in response_headers.keys():
-                    if 'NTLM' in response_headers['WWW-Authenticate']:
-                        print(colored("[+] {} has NTLM authentication enabled!".format(url), 'green'))
+                if "WWW-Authenticate" in response_headers.keys():
+                    if "NTLM" in response_headers["WWW-Authenticate"]:
+                        if not silent:
+                            print(
+                                colored(
+                                    "[+] {} has NTLM authentication enabled!".format(url),
+                                    "green",
+                                )
+                            )
                         return True
                     else:
-                        print(colored("[+] {} requires authentication but the method was found to be {}".format(
-                                url, response_headers['WWW-Authenticate']), "yellow"))
+                        if not silent:
+                            print(
+                                colored(
+                                    "[+] {} requires authentication but the method was found to be {}".format(
+                                        url, response_headers["WWW-Authenticate"]
+                                    ),
+                                    "yellow",
+                                )
+                            )
             else:
                 return False
 
 
-def gather_ntlm_info(url):
+def gather_ntlm_info(url, random_user_agent, silent):
     # Let's validate if it's a URL first
     if not is_valid_url(url):
         return False
     else:
         response_data = dict()
         response_data[url] = dict()
-        response_data[url]['meta'] = dict()
+        response_data[url]["meta"] = dict()
 
-        ntlm_check_response = detect_ntlm_auth(url)
+        ntlm_check_response = detect_ntlm_auth(url, silent, random_user_agent)
 
         if ntlm_check_response:
             if type(ntlm_check_response) is not bool:
-                if 'FAIL ' in ntlm_check_response:
+                if "FAIL " in ntlm_check_response:
                     return False
             # Send a random auth header to get response with NTLMSSP data
+            if random_user_agent:
+                user_agent = random_user_agent()
+            else: # If not, use a default one
+                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36" 
+
             headers = {
-                'Authorization' : 'NTLM TlRMTVNTUAABAAAAMpCI4gAAAAAoAAAAAAAAACgAAAAGAbEdAAAADw=='
+                "Authorization": "NTLM TlRMTVNTUAABAAAAMpCI4gAAAAAoAAAAAAAAACgAAAAGAbEdAAAADw==",
+                "User-Agent": user_agent,
             }
-            response_data[url]['meta']['is_valid_url'] = True
-            response_data[url]['meta']['has_ntlm_endpoint'] = True
-            auth_response = requests_retry_session().get(url, verify=False, headers=headers)
+            response_data[url]["meta"]["is_valid_url"] = True
+            response_data[url]["meta"]["has_ntlm_endpoint"] = True
+            auth_response = requests_retry_session().get(
+                url, verify=False, headers=headers
+            )
             auth_header = dict(auth_response.headers)
-            if 'WWW-Authenticate' in auth_header.keys():
-                response_data[url]['meta']['has_authenticate_header'] = True
-                header_data = auth_header['WWW-Authenticate']
+            if "WWW-Authenticate" in auth_header.keys():
+                response_data[url]["meta"]["has_authenticate_header"] = True
+                header_data = auth_header["WWW-Authenticate"]
                 try:
-                    ntlm_string = header_data.split(',')[0][5:]
+                    ntlm_string = header_data.split(",")[0][5:]
                 except:
-                    print("Error parsing NTLM string for {}. Please check manually!".format(url))
+                    print(
+                        "Error parsing NTLM string for {}. Please check manually!".format(
+                            url
+                        )
+                    )
                 else:
                     server_details = decode_ntlm_str(ntlm_string)
                     if server_details:
-                        response_data[url]['meta']['status'] = 'ok'
-                        response_data[url]['data'] = server_details
+                        response_data[url]["meta"]["status"] = "ok"
+                        response_data[url]["data"] = server_details
                         # Let's save some bytes
                         try:
-                            del (response_data[url]['data']['UNKNOWN'])
+                            del response_data[url]["data"]["UNKNOWN"]
                         except KeyError:
                             pass
                         """

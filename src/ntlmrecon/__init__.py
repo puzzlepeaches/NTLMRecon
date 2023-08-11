@@ -1,120 +1,193 @@
-import argparse
+import click
 import json
-import requests
 import csv
-import sys
 import os
 
+import sys
+from termcolor import colored
+from urllib.parse import urlsplit
 from colorama import init as init_colorama
 from multiprocessing.dummy import Pool as ThreadPool
 from ntlmrecon.ntlmutil import gather_ntlm_info
 from ntlmrecon.misc import print_banner, INTERNAL_WORDLIST
 from ntlmrecon.inpututils import readfile_and_gen_input, read_input_and_gen_list
-from termcolor import colored
-from urllib.parse import urlsplit
 
-# Initialize colors in Windows - Because I like Windows too!
 init_colorama()
-
-# make the Pool of workers
-# TODO: Make this an argument
-
-FOUND_DOMAINS = []
+CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help", "help"])
 
 
-def in_found_domains(url):
-    split_url = urlsplit(url)
-    if split_url.hostname in FOUND_DOMAINS:
-        return True
-    else:
-        return False
+def write_records(records, filename, output_type):
+    if output_type == "csv":
+        mode = "a" if os.path.exists(filename) else "w+"
+        with open(filename, mode) as file:
+            writer = csv.writer(file)
+            if mode == "w+":
+                writer.writerow(
+                    [
+                        "URL",
+                        "AD Domain Name",
+                        "Server Name",
+                        "DNS Domain Name",
+                        "FQDN",
+                        "Parent DNS Domain",
+                    ]
+                )
+            for record in records:
+                csv_record = [list(record.keys())[0]] + list(
+                    record[list(record.keys())[0]]["data"].values()
+                )
+                writer.writerow(csv_record)
+    elif output_type == "json":
+        with open(filename, "a" if os.path.exists(filename) else "w+") as file:
+            for record in records:
+                r = {
+                    "url": list(record.keys())[0],
+                    "domain": list(record.values())[0]["data"]["AD domain name"],
+                    "server": list(record.values())[0]["data"]["Server name"],
+                    "dns_domain": list(record.values())[0]["data"]["DNS domain name"],
+                    "fqdn": list(record.values())[0]["data"]["FQDN"],
+                    "parent": list(record.values())[0]["data"]["Parent DNS domain"],
+                }
+                file.write(json.dumps(r) + "\n")
 
 
-def write_records_to_csv(records, filename):
-    if os.path.exists(filename):
-        append_write = 'a'
-    else:
-        append_write = 'w+'
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--input",
+    "-i",
+    help="Pass input as an IP address, URL or CIDR to enumerate NTLM endpoints",
+)
+@click.option(
+    "--infile",
+    "-I",
+    help="Pass input from a local file",
+    type=click.Path(exists=True, resolve_path=True, dir_okay=False),
+)
+@click.option(
+    "--wordlist",
+    help="Override the internal wordlist with a custom wordlist",
+    type=click.Path(exists=True, resolve_path=True, dir_okay=False),
+)
+@click.option(
+    "--threads",
+    help="Set number of threads (Default: 10)",
+    default=10,
+    show_default=True,
+    type=int,
+)
+@click.option(
+    "--output-type",
+    "-o",
+    help="Output type",
+    default="json",
+    show_default=True,
+    type=click.Choice(["csv", "json", "stdout"]),
+)
+@click.option(
+    "--outfile",
+    "-O",
+    help="Set output file name",
+    default=None,
+    show_default=True,
+    type=click.Path(resolve_path=True, dir_okay=False),
+)
+@click.option(
+    "--random-user-agent",
+    is_flag=True,
+    help="TODO: Randomize user agents when sending requests (Default: False)",
+)
+@click.option(
+    "--force-all",
+    is_flag=True,
+    help="Force enumerate all endpoints even if a valid endpoint is found for a URL (Default: False)",
+)
+@click.option("--shuffle", is_flag=True, help="Break order of the input files")
+@click.option(
+    "-f", "--force", is_flag=True, help="Force replace output file if it already exists"
+)
+@click.option("--silent", "-s", is_flag=True, help="Suppress all output except errors.")
+def main(
+    input,
+    infile,
+    wordlist,
+    threads,
+    output_type,
+    outfile,
+    random_user_agent,
+    force_all,
+    shuffle,
+    force,
+    silent,
+):
+    if not input and not infile:
+        click.echo(
+            colored(
+                "[!] Please specify either an input or an input file. Use --help for more information",
+                "red",
+            )
+        )
+        return
 
-    with open(filename, append_write) as file:
-        writer = csv.writer(file)
-        if append_write == 'w+':
-            writer.writerow(['URL', 'AD Domain Name', 'Server Name', 'DNS Domain Name', 'FQDN', 'Parent DNS Domain'])
-        for record in records:
-            csv_record = list()
-            url = list(record.keys())[0]
-            csv_record.append(url)
-            csv_record.extend(list(record[url]['data'].values()))
-            writer.writerow(csv_record)
+    outfile = outfile or (
+        f"ntlmrecon.{output_type}" if output_type != "stdout" else None
+    )
 
+    # if outfile and os.path.exists(outfile) and not force and output_type != "stdout":
+    #     click.confirm(
+    #         "Output file already exists. Do you want to append to it?", abort=True
+    #     )
+    # If output file exists, delete it
+    if outfile and os.path.exists(outfile) and not force and output_type != "stdout":
+        os.remove(outfile)
 
-def main():
-    # Init arg parser
-    parser = argparse.ArgumentParser(description=print_banner())
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--input', '-i',  help='Pass input as an IP address, URL or CIDR to enumerate NTLM endpoints')
-    group.add_argument('--infile', '-I', help='Pass input from a local file')
-    parser.add_argument('--wordlist', help='Override the internal wordlist with a custom wordlist', required=False)
-    parser.add_argument('--threads', help="Set number of threads (Default: 10)", required=False, default=10)
-    parser.add_argument('--output-type', '-o', help='Set output type. JSON (TODO) and CSV supported (Default: CSV)',
-                        required=False, default='csv', action="store_true")
-    parser.add_argument('--outfile', '-O', help='Set output file name (Default: ntlmrecon.csv)', default='ntlmrecon.csv')
-    parser.add_argument('--random-user-agent', help="TODO: Randomize user agents when sending requests (Default: False)",
-                        default=False, action="store_true")
-    parser.add_argument('--force-all', help="Force enumerate all endpoints even if a valid endpoint is found for a URL "
-                                            "(Default : False)", default=False, action="store_true")
-    parser.add_argument('--shuffle', help="Break order of the input files", default=False, action="store_true")
-    parser.add_argument('-f', '--force', help="Force replace output file if it already exists", action="store_true",
-                        default=False)
-    args = parser.parse_args()
+    records = (
+        read_input_and_gen_list(input, shuffle=shuffle)
+        if input
+        else readfile_and_gen_input(infile, shuffle=shuffle)
+    )
+    wordlist = INTERNAL_WORDLIST if not wordlist else open(wordlist).read().splitlines()
 
-    if not args.input and not args.infile:
-        print(colored("[!] How about you check the -h flag?", "red"))
-
-    if os.path.isdir(args.outfile):
-        print(colored("[!] Invalid filename. Please enter a valid filename!", "red"))
-        sys.exit()
-    elif os.path.exists(args.outfile) and not args.force:
-        print(colored("[!] Output file {} already exists. "
-                      "Choose a different file name or use -f to overwrite the file".format(args.outfile), "red"))
-        sys.exit()
-
-    pool = ThreadPool(int(args.threads))
-
-    if args.input:
-        records = read_input_and_gen_list(args.input, shuffle=args.shuffle)
-    elif args.infile:
-        records = readfile_and_gen_input(args.infile, shuffle=args.shuffle)
-    else:
-        sys.exit(1)
-
-    # Check if a custom wordlist is specified
-    if args.wordlist:
-        try:
-            with open(args.wordlist, 'r') as fr:
-                wordlist = fr.read().split('\n')
-                wordlist = [x for x in wordlist if x]
-        except (OSError, FileNotFoundError):
-            print(colored("[!] Cannot read the specified file {}. Check if file exists and you have "
-                          "permission to read it".format(args.wordlist), "red"))
-            sys.exit(1)
-    else:
-        wordlist = INTERNAL_WORDLIST
-    # Identify all URLs with web servers running
+    pool = ThreadPool(threads)
     for record in records:
-        print(colored("[+] Brute-forcing {} endpoints on {}".format(len(wordlist), record), "yellow"))
-        all_combos = []
-        for word in wordlist:
-            if word.startswith('/'):
-                all_combos.append(str(record+word))
-            else:
-                all_combos.append(str(record+"/"+word))
+        if not silent:
+            print(
+                colored(
+                    f"[+] Brute-forcing {len(wordlist)} endpoints on {record}", "yellow"
+                )
+            )
 
-        results = pool.map(gather_ntlm_info, all_combos)
-        results = [x for x in results if x]
+        all_combos = [f"{record}/{word.lstrip('/')}" for word in wordlist]
+
+        def gather(combo):
+            return gather_ntlm_info(combo, random_user_agent, silent)
+
+        # results = [
+        #     result for result in pool.map(gather_ntlm_info, all_combos) if result
+        # ]
+        results = [
+            result for result in pool.map(gather, all_combos) if result
+        ]
+
         if results:
-            write_records_to_csv(results, args.outfile)
-            print(colored('[+] Output for {} saved to {} '.format(record, args.outfile), 'green'))
+            if output_type == "stdout":
+                for record in results:
+                    r = {
+                        "url": list(record.keys())[0],
+                        "domain": list(record.values())[0]["data"]["AD domain name"],
+                        "server": list(record.values())[0]["data"]["Server name"],
+                        "dns_domain": list(record.values())[0]["data"]["DNS domain name"],
+                        "fqdn": list(record.values())[0]["data"]["FQDN"],
+                        "parent": list(record.values())[0]["data"]["Parent DNS domain"],
+                    }
+                    print(json.dumps(r))
+            else:
+                write_records(results, outfile, output_type)
+                if not silent and output_type != "stdout":
+                    print(
+                        colored(f"[+] Output saved to {outfile} ", "green")
+                    )
 
 
-
+if __name__ == "__main__":
+    print_banner()
+    main()
