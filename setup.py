@@ -6,7 +6,9 @@ setup(
     version="0.4b0",
     description="A tool to enumerate information from NTLM authentication enabled web endpoints",
     license="MIT",
-    long_description=open(path.join(path.abspath(path.dirname(__file__)), "README.md"), encoding="utf-8").read(),
+    long_description=open(
+        path.join(path.abspath(path.dirname(__file__)), "README.md"), encoding="utf-8"
+    ).read(),
     long_description_content_type="text/markdown",
     url="https://github.com/sachinkamath/ntlmrecon",
     author="Sachin S Kamath (@sachinkamath)",
@@ -22,7 +24,8 @@ setup(
         "requests",
         "setuptools",
         "termcolor",
-        "urllib3"
+        "urllib3",
+        "PySocks",
     ],
     entry_points={
         "console_scripts": [

@@ -171,7 +171,7 @@ def url_is_reachable(url):
 # Verifies if the endpoint has authentication enabled and looks for NTLM specifically
 
 
-def detect_ntlm_auth(url, silent, random_user_agent):
+def detect_ntlm_auth(url, silent, random_user_agent, proxies):
     global FAIL_DOMAINS
 
     if not is_valid_url(url):
@@ -184,8 +184,18 @@ def detect_ntlm_auth(url, silent, random_user_agent):
                 if random_user_agent:
                     headers = {"User-Agent": random_user_agent()}
                 else:
-                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"}
-                response = requests.head(url, verify=False, timeout=3, headers=headers)
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"
+                    }
+
+                if proxies is type(dict):
+                    response = requests.head(
+                        url, verify=False, timeout=3, headers=headers, proxies=proxies
+                    )
+                else:
+                    response = requests.head(
+                        url, verify=False, timeout=3, headers=headers
+                    )
         except (OSError, ConnectionError) as e:
             if urlparse(url).netloc not in FAIL_DOMAINS:
                 FAIL_DOMAINS.append(urlparse(url).netloc)
@@ -204,7 +214,9 @@ def detect_ntlm_auth(url, silent, random_user_agent):
                         if not silent:
                             print(
                                 colored(
-                                    "[+] {} has NTLM authentication enabled!".format(url),
+                                    "[+] {} has NTLM authentication enabled!".format(
+                                        url
+                                    ),
                                     "green",
                                 )
                             )
@@ -223,7 +235,7 @@ def detect_ntlm_auth(url, silent, random_user_agent):
                 return False
 
 
-def gather_ntlm_info(url, random_user_agent, silent):
+def gather_ntlm_info(url, random_user_agent, silent, proxy):
     # Let's validate if it's a URL first
     if not is_valid_url(url):
         return False
@@ -232,7 +244,17 @@ def gather_ntlm_info(url, random_user_agent, silent):
         response_data[url] = dict()
         response_data[url]["meta"] = dict()
 
-        ntlm_check_response = detect_ntlm_auth(url, silent, random_user_agent)
+        if proxy is not False:
+            proxies = {
+                "http": proxy,
+                "https": proxy,
+            }
+            # print("[*] Using proxy: {}".format(proxies))
+
+        ntlm_check_response = detect_ntlm_auth(url, silent, random_user_agent, proxies)
+
+        #  else:
+        #      ntlm_check_response = detect_ntlm_auth(url, silent, random_user_agent, False)
 
         if ntlm_check_response:
             if type(ntlm_check_response) is not bool:
@@ -241,8 +263,8 @@ def gather_ntlm_info(url, random_user_agent, silent):
             # Send a random auth header to get response with NTLMSSP data
             if random_user_agent:
                 user_agent = random_user_agent()
-            else: # If not, use a default one
-                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36" 
+            else:  # If not, use a default one
+                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36"
 
             headers = {
                 "Authorization": "NTLM TlRMTVNTUAABAAAAMpCI4gAAAAAoAAAAAAAAACgAAAAGAbEdAAAADw==",
@@ -250,9 +272,14 @@ def gather_ntlm_info(url, random_user_agent, silent):
             }
             response_data[url]["meta"]["is_valid_url"] = True
             response_data[url]["meta"]["has_ntlm_endpoint"] = True
-            auth_response = requests_retry_session().get(
-                url, verify=False, headers=headers
-            )
+            if proxy is not False:
+                auth_response = requests_retry_session().get(
+                    url, verify=False, headers=headers, proxies=proxies
+                )
+            else:
+                auth_response = requests_retry_session().get(
+                    url, verify=False, headers=headers
+                )
             auth_header = dict(auth_response.headers)
             if "WWW-Authenticate" in auth_header.keys():
                 response_data[url]["meta"]["has_authenticate_header"] = True

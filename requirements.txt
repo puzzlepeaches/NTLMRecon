@@ -5,3 +5,4 @@ requests
 setuptools
 termcolor
 urllib3
+PySocks

@@ -3,6 +3,7 @@
 Pipefile
 .vscode
 .jython_cache
+.aider.chat.history.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
